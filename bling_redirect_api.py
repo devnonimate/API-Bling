@@ -24,15 +24,6 @@ app = FastAPI()
 
 @app.post("/capture-redirect")
 def capture_redirect(req: CaptureRequest):
-    """
-    Fluxo:
-    1. Inicia navegador em modo headless com configurações para ambiente Linux
-    2. Acessa página de login e aguarda os campos corretos
-    3. Preenche credenciais usando os seletores exatos do Bling
-    4. Clica no botão Entrar e aguarda navegação
-    5. Acessa target_url e aguarda carregamento completo
-    6. Retorna URL final redirecionada
-    """
     try:
         with sync_playwright() as pw:
             logger.info("1) Iniciando navegador")
@@ -40,7 +31,6 @@ def capture_redirect(req: CaptureRequest):
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-            # Optional: definir user agent para minimizar detecção de bot
             context = browser.new_context(
                 user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -53,9 +43,7 @@ def capture_redirect(req: CaptureRequest):
             page.wait_for_load_state("networkidle", timeout=20000)
 
             logger.info("3) Aguardando campos de login do Bling")
-            # Campo de usuário by ID
             page.wait_for_selector("#username", timeout=30000)
-            # Campo de senha: usa data attribute pois o type é text
             page.wait_for_selector("input[data-gtm-form-interact-field-id=\"1\"]", timeout=30000)
 
             logger.info("4) Preenchendo usuário e senha")
@@ -63,12 +51,9 @@ def capture_redirect(req: CaptureRequest):
             page.fill("input[data-gtm-form-interact-field-id=\"1\"]", req.password)
 
             logger.info("5) Clicando no botão Entrar")
-            # Botão pelo texto ou classe
             with page.expect_navigation(timeout=30000):
                 page.click("button.login-button-submit")
 
-            # Aqui você pode validar sucesso de login, por exemplo, aguardando menu ou perfil
-            # Exemplo genérico: espera carregamento de um elemento do dashboard
             page.wait_for_load_state("networkidle", timeout=20000)
 
             logger.info(f"6) Navegando para target_url: {req.target_url}")
@@ -82,11 +67,10 @@ def capture_redirect(req: CaptureRequest):
             return {"redirected_url": final_url}
 
     except PWTimeout as e:
-        logger.error(f"Timeout: {e}")
-        raise HTTPException(status_code=504, detail="Timeout ao carregar página ou esperar elemento")
+        html = page.content() if 'page' in locals() else ""
+        logger.error(f"Timeout: {e}\nHTML capturado:\n{html[:1000]}")
+        raise HTTPException(status_code=504, detail={"error": "Timeout", "html": html[:10000]})
     except Exception as e:
+        html = page.content() if 'page' in locals() else ""
         logger.exception("Erro inesperado no fluxo")
-        raise HTTPException(status_code=500, detail=f"Erro interno: {e}")
-
-# Executar localmente com:
-# uvicorn bling_redirect_api:app --reload --host 0.0.0.0 --port 8000
+        raise HTTPException(status_code=500, detail={"error": str(e), "html": html[:10000]})
