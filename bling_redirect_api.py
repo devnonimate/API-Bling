@@ -24,6 +24,7 @@ app = FastAPI()
 
 @app.post("/capture-redirect")
 def capture_redirect(req: CaptureRequest):
+    last_html = ""  # Armazena o HTML da página para debug
     try:
         with sync_playwright() as pw:
             logger.info("1) Iniciando navegador")
@@ -41,6 +42,7 @@ def capture_redirect(req: CaptureRequest):
             logger.info(f"2) Navegando para login_url: {req.login_url}")
             page.goto(req.login_url, timeout=45000)
             page.wait_for_load_state("networkidle", timeout=20000)
+            last_html = page.content()
 
             logger.info("3) Aguardando campos de login do Bling")
             page.wait_for_selector("#username", timeout=30000)
@@ -55,22 +57,22 @@ def capture_redirect(req: CaptureRequest):
                 page.click("button.login-button-submit")
 
             page.wait_for_load_state("networkidle", timeout=20000)
+            last_html = page.content()
 
             logger.info(f"6) Navegando para target_url: {req.target_url}")
             page.goto(req.target_url, timeout=45000)
             page.wait_for_load_state("networkidle", timeout=30000)
 
             final_url = page.url
-            logger.info(f"7) URL final capturada: {final_url}")
+            last_html = page.content()
 
+            logger.info(f"7) URL final capturada: {final_url}")
             browser.close()
             return {"redirected_url": final_url}
 
     except PWTimeout as e:
-        html = page.content() if 'page' in locals() else ""
-        logger.error(f"Timeout: {e}\nHTML capturado:\n{html[:1000]}")
-        raise HTTPException(status_code=504, detail={"error": "Timeout", "html": html[:10000]})
+        logger.error(f"Timeout: {e}\nHTML capturado:\n{last_html[:1000]}")
+        raise HTTPException(status_code=504, detail={"error": "Timeout", "html": last_html[:10000]})
     except Exception as e:
-        html = page.content() if 'page' in locals() else ""
         logger.exception("Erro inesperado no fluxo")
-        raise HTTPException(status_code=500, detail={"error": str(e), "html": html[:10000]})
+        raise HTTPException(status_code=500, detail={"error": str(e), "html": last_html[:10000]})
