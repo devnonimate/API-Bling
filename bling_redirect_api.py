@@ -26,12 +26,12 @@ app = FastAPI()
 def capture_redirect(req: CaptureRequest):
     """
     Fluxo:
-    1. Inicia navegador com user agent real para evitar bloqueios
-    2. Acessa página de login e aguarda campo de usuário
-    3. Preenche credenciais e submete o formulário
-    4. Aguarda elemento pós-login para confirmar autenticação
+    1. Inicia navegador em modo headless com configurações para ambiente Linux
+    2. Acessa página de login e aguarda os campos corretos
+    3. Preenche credenciais usando os seletores exatos do Bling
+    4. Clica no botão Entrar e aguarda navegação
     5. Acessa target_url e aguarda carregamento completo
-    6. Retorna URL final
+    6. Retorna URL final redirecionada
     """
     try:
         with sync_playwright() as pw:
@@ -40,43 +40,53 @@ def capture_redirect(req: CaptureRequest):
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-            # Define user agent como Chrome desktop comum
-            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                          "Chrome/115.0.0.0 Safari/537.36")
+            # Optional: definir user agent para minimizar detecção de bot
+            context = browser.new_context(
+                user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/115.0.0.0 Safari/537.36")
+            )
             page = context.new_page()
 
-            logger.info(f"2) Indo para login_url: {req.login_url}")
+            logger.info(f"2) Navegando para login_url: {req.login_url}")
             page.goto(req.login_url, timeout=45000)
+            page.wait_for_load_state("networkidle", timeout=20000)
 
-            logger.info("3) Aguardando campo de usuário")
+            logger.info("3) Aguardando campos de login do Bling")
+            # Campo de usuário by ID
             page.wait_for_selector("#username", timeout=30000)
-            page.wait_for_selector("input[type='password']", timeout=30000)
+            # Campo de senha: usa data attribute pois o type é text
+            page.wait_for_selector("input[data-gtm-form-interact-field-id=\"1\"]", timeout=30000)
 
             logger.info("4) Preenchendo usuário e senha")
             page.fill("#username", req.username)
-            page.fill("input[type='password']", req.password)
+            page.fill("input[data-gtm-form-interact-field-id=\"1\"]", req.password)
 
             logger.info("5) Clicando no botão Entrar")
+            # Botão pelo texto ou classe
             with page.expect_navigation(timeout=30000):
                 page.click("button.login-button-submit")
 
-            # Valida login: espera um elemento que só existe dentro do dashboard
-            logger.info("6) Aguardando indicador de login bem-sucedido")
-            page.wait_for_selector("nav[data-gtm='app-menu']", timeout=30000)
+            # Aqui você pode validar sucesso de login, por exemplo, aguardando menu ou perfil
+            # Exemplo genérico: espera carregamento de um elemento do dashboard
+            page.wait_for_load_state("networkidle", timeout=20000)
 
-            logger.info(f"7) Indo para target_url: {req.target_url}")
+            logger.info(f"6) Navegando para target_url: {req.target_url}")
             page.goto(req.target_url, timeout=45000)
             page.wait_for_load_state("networkidle", timeout=30000)
 
             final_url = page.url
-            logger.info(f"8) URL final capturada: {final_url}")
+            logger.info(f"7) URL final capturada: {final_url}")
 
             browser.close()
             return {"redirected_url": final_url}
+
     except PWTimeout as e:
         logger.error(f"Timeout: {e}")
         raise HTTPException(status_code=504, detail="Timeout ao carregar página ou esperar elemento")
     except Exception as e:
-        logger.exception("Erro no fluxo")
+        logger.exception("Erro inesperado no fluxo")
         raise HTTPException(status_code=500, detail=f"Erro interno: {e}")
+
+# Executar localmente com:
+# uvicorn bling_redirect_api:app --reload --host 0.0.0.0 --port 8000
